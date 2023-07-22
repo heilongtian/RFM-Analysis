@@ -1,0 +1,210 @@
+import pandas as pd
+import numpy as np
+import datetime
+data = pd.read_excel(r"C:\Users\DELL\Downloads\DAC\Python\Project Final\Dataset.xlsx",sheet_name="Orders")
+
+print(data.head(10))
+
+returned = pd.read_excel(r"C:\Users\DELL\Downloads\DAC\Python\Project Final\Dataset.xlsx",sheet_name = 'Return')
+new = pd.merge(data, returned, on="Order ID", how="left")
+new.drop_duplicates()
+
+new.drop(new[new.Returned == 'Yes'].index, inplace=True)
+new
+
+#Recency
+day = '2017-12-31'
+day = pd.to_datetime(day)
+recency = new.groupby(['Customer ID']).agg({'Order Date':lambda x:((day-x.max()).days)})
+recency
+
+#Frequency
+freq = new.groupby(['Customer ID'])['Order ID'].nunique()
+freq
+
+#Monetary
+money = new.groupby(['Customer ID'])['Sales'].sum()
+money
+
+RFM = pd.concat([recency,freq,money],axis=1)
+RFM.rename(columns = {'Order Date':'Recency','Order ID':'Frequency','Sales':'Monetary'},inplace=True)
+RFM = RFM.reset_index()
+RFM
+
+
+RFM.Recency.describe()
+
+RFM.Frequency.describe()
+
+RFM.Monetary.describe()
+
+quantiles = RFM.quantile(q=[0.2,0.4,0.6,0.8])
+quantiles = quantiles.to_dict()
+
+def Rscoring(x,p,d):
+    if x <= d[p][0.2]:
+        return 5
+    elif x <= d[p][0.4]:
+        return 4
+    elif x <= d[p][0.6]:
+        return 3
+    elif x <= d[p][0.8]:
+        return 2
+    else:
+        return 1
+
+def FMscoring(x,p,d):
+    if x <= d[p][0.2]:
+        return 1
+    elif x <= d[p][0.4]:
+        return 2
+    elif x <= d[p][0.6]:
+        return 3
+    elif x <= d[p][0.8]:
+        return 4
+    else:
+        return 5
+
+RFM['R'] = RFM['Recency'].apply(Rscoring, args=('Recency',quantiles,))
+RFM['F'] = RFM['Frequency'].apply(FMscoring, args=('Frequency',quantiles,))
+RFM['M'] = RFM['Monetary'].apply(FMscoring, args=('Monetary',quantiles,))
+RFM
+
+RFM['RFM Score'] = RFM.R.map(str) + RFM.F.map(str) + RFM.M.map(str)
+RFM['RFM Score'] = RFM['RFM Score'].astype(int).apply(np.int64)
+RFM.drop_duplicates()
+
+pip install squarify
+import squarify
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+columns = ['Recency','Frequency','Monetary']
+
+for col in columns:
+    fig, ax = plt.subplots(figsize=(8,3))
+    sns.distplot(RFM[col])
+    ax.set_title('Distribution of %s' % col)
+    plt.show()
+
+RFM.dtypes
+df = pd.read_excel(r"C:\Users\DELL\Downloads\DAC\Python\Project Final\Dataset.xlsx",sheet_name="Segmentation")
+df
+
+df['RFM Score'] = df['RFM Score'].str.split(',')
+df
+
+newdf = df.explode('RFM Score')
+newdf['RFM Score'] = newdf['RFM Score'].astype(int).apply(np.int64)
+newdf.reset_index(drop=True)
+
+table = pd.merge(RFM, newdf, on="RFM Score", how="left")
+table
+
+frame = table.groupby('Segment').agg({'Customer ID':'count',
+                                      'Recency':'mean',
+                                      'Frequency':'mean',
+                                      'Monetary':'sum'}).reset_index()
+frame.columns = ['Segment','Total Customer','AVG Recency','AVG Frequency','Total Monetary']
+frame = frame.sort_values('Total Customer',ascending=False)
+frame
+
+frame['C %'] = frame['Total Customer'] * 100 / frame['Total Customer'].sum()
+frame['R %'] = frame['AVG Recency'] * 100 / frame['AVG Recency'].sum()
+frame['F %'] = frame['AVG Frequency'] * 100 / frame['AVG Frequency'].sum()
+frame['M %'] = frame['Total Monetary'] * 100 / frame['Total Monetary'].sum()
+frame
+
+fig, ax = plt.subplots(1, figsize=(15,8))
+colors = ['red','green','lightblue','yellow','pink','gray','orange','violet','brown','silver','beige']
+
+squarify.plot(sizes = frame['C %'],
+              label = frame['Segment'],
+              value = [f'{x:.2f}%' for x in frame['C %']], 
+              alpha = 0.8, color = colors,
+              bar_kwargs = dict(linewidth=1.5,edgecolor='white'))
+
+plt.title('RFM Segments of Total Customer', fontsize = 15)
+plt.axis('off')
+plt.show()
+
+fig, ax = plt.subplots(1, figsize=(15,8))
+colors = ['red','green','lightblue','yellow','pink','gray','orange','violet','brown','silver','beige']
+
+squarify.plot(sizes = frame['M %'],
+              label = frame['Segment'],
+              value = [f'{x:.2f}%' for x in frame['M %']], 
+              alpha = 0.8, color = colors,
+              bar_kwargs = dict(linewidth=1.5,edgecolor='white'))
+
+plt.title('RFM Segments of Total Monetary', fontsize = 15)
+plt.axis('off')
+plt.show()
+
+frame = frame.sort_values('AVG Recency', ascending = False)
+g = sns.catplot(x='AVG Recency',
+                y='Segment',
+                data=frame,
+                kind='bar')
+ax = g.facet_axis(0, 0)
+for c in ax.containers:
+    labels = [f' {x:.1f}' for x in frame['AVG Recency']]
+    ax.bar_label(c, labels=labels, label_type='edge',fontsize = 8)
+
+plt.title('AVG Recency by Segment', fontsize = 10)
+plt.show()
+
+frame = frame.sort_values('AVG Frequency', ascending = False)
+g = sns.catplot(x='Segment',
+                y='AVG Frequency',
+                data=frame,
+                kind='bar')
+ax = g.facet_axis(0, 0)
+for c in ax.containers:
+    labels = [f' {x:.1f}' for x in frame['AVG Frequency']]
+    ax.bar_label(c, labels=labels, label_type='edge',fontsize = 8)
+
+plt.title('AVG Frequency by Segment', fontsize = 10)
+plt.xticks(rotation=90)
+plt.show()
+
+table2 = pd.merge(new,table,on='Customer ID',how='left')
+table2['Delivery Day'] = table2['Ship Date'] - table2['Order Date']
+table2 = table2[['Segment','Ship Mode','Channel','Sales','Delivery Day']]
+table2
+
+pro = table2.groupby('Ship Mode')['Delivery Day'].mean().reset_index()
+pro['Delivery Day'] = pro['Delivery Day'].dt.days
+pro
+
+sns.catplot(x='Ship Mode',
+            y='Delivery Day',
+            data=pro,
+            kind='bar')
+plt.title('Average Delivery Day by Ship Mode',fontsize=10)
+plt.show()
+
+pro1 = table2.groupby('Channel').sum().reset_index()
+pro1
+
+sns.catplot(x='Channel',
+            y='Sales',
+            data=pro1,
+            kind='bar')
+plt.title('Total Sales by Channel',fontsize = 10)
+plt.show()
+
+
+
+
+
+
+
+
+              
+
+              
+
+
+
+
